@@ -308,4 +308,4 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Current dependency notes
 
-The current checked package lines used by this repository were verified against public package indexes when this implementation was updated: Next.js 16.3.4, React 19.2.8, Recharts 3.10.1, Tailwind CSS 4.3.3, FastAPI 0.141.x, SQLAlchemy 2.0.52, and scikit-learn 1.9.0. citeturn494363search3turn990444search0turn766744search0turn766744search3turn494363search2turn990444search3turn990444search5
+The current package pins/ranges were checked against public package indexes during the update. Generated model artifacts are intentionally created by `scripts/train_model.py` and ignored from source control because the GitHub file interface used for this build only supports UTF-8 text writes, while a real scikit-learn pickle is binary.
