@@ -17,13 +17,19 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
-def test_predict():
-    response = client.post("/api/predict", json=payload())
+def test_predict_persists_transaction_and_prediction():
+    transaction_id = "TEST_PERSISTED_API"
+    body = payload() | {"transaction_id": transaction_id}
+    response = client.post("/api/predict", json=body)
     assert response.status_code == 200
-    body = response.json()
-    assert {"risk_score", "risk_level", "fraud_probability", "reasons", "recommended_action"}.issubset(body)
-    assert 0 <= body["risk_score"] <= 100
-    assert 0 <= body["fraud_probability"] <= 1
+    result = response.json()
+    assert result["transaction_id"] == transaction_id
+    assert {"risk_score", "risk_level", "fraud_probability", "reasons", "recommended_action"}.issubset(result)
+    assert 0 <= result["risk_score"] <= 100
+    assert 0 <= result["fraud_probability"] <= 1
+    detail = client.get(f"/api/transactions/{transaction_id}")
+    assert detail.status_code == 200
+    assert detail.json()["amount"] == body["amount"]
 
 
 def test_batch_predict():
@@ -35,10 +41,30 @@ def test_batch_predict():
     assert len(body["results"]) == 2
 
 
+def test_batch_predict_skips_invalid_rows():
+    csv_text = "transaction_id,amount,customer_id,account_age_days,device_id,country,transactions_last_10m,transactions_last_1h,failed_payments,previous_avg_amount,is_new_device,is_new_location,distance_from_previous_location,device_transaction_count,ip_transaction_count,payment_method,hour,customer_transaction_count\nGOOD,1200,C1,500,D1,IN,1,3,0,1100,0,0,10,2,1,upi,13,60\nBAD,-5,C2,12,D2,US,9,18,3,8500,1,1,1800,14,10,card,2,12\n"
+    response = client.post("/api/batch-predict", files={"file": ("mixed.csv", io.BytesIO(csv_text.encode()), "text/csv")})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rows_detected"] == 2
+    assert body["valid_transactions"] == 1
+    assert body["invalid_rows"] == 1
+
+
+def test_batch_predict_rejects_malformed_binary_flags():
+    csv_text = "transaction_id,amount,customer_id,account_age_days,device_id,country,transactions_last_10m,transactions_last_1h,failed_payments,previous_avg_amount,is_new_device,is_new_location,distance_from_previous_location,device_transaction_count,ip_transaction_count,payment_method,hour,customer_transaction_count\nBADFLAG,1200,C1,500,D1,IN,1,3,0,1100,2,0,10,2,1,upi,13,60\n"
+    response = client.post("/api/batch-predict", files={"file": ("flags.csv", io.BytesIO(csv_text.encode()), "text/csv")})
+    assert response.status_code == 422
+
+
 def test_metrics_and_dashboard():
     metrics = client.get("/api/metrics")
     assert metrics.status_code == 200
     assert metrics.json().get("test_size", 0) >= 1000
+    for threshold in (0.01, 0.5, 0.99):
+        response = client.get("/api/metrics", params={"threshold": threshold})
+        assert response.status_code == 200
+        assert response.json()["threshold_curve"]
     dashboard = client.get("/api/dashboard")
     assert dashboard.status_code == 200
     assert dashboard.json()["transactions_analyzed"] >= 1
@@ -66,3 +92,12 @@ def test_transaction_not_found_and_export():
     export = client.get("/api/transactions/export")
     assert export.status_code == 200
     assert "text/csv" in export.headers["content-type"]
+
+
+def test_demo_seed_is_idempotent():
+    first = client.post("/api/demo/seed")
+    second = client.post("/api/demo/seed")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["seeded"] >= 0
+    assert second.json()["seeded"] == 0
