@@ -1,8 +1,13 @@
 """Seed RiskLens with memorable defense-only demo scenarios."""
 
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
-from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -10,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from backend.database import SessionLocal, init_db  # noqa: E402
 from backend.ml.dataset import generate_dataset  # noqa: E402
 from backend.ml.predict import load_artifact  # noqa: E402
+from backend.models import Transaction  # noqa: E402
 from backend.services.transaction_service import predict_and_save  # noqa: E402
 
 
@@ -26,7 +32,7 @@ def scenario(transaction_id: str, amount: float, previous_avg: float, velocity: 
     }
 
 
-def seed_demo_rows(db) -> int:
+def seed_demo_rows(db: Session) -> int:
     load_artifact()
     rows = [
         scenario("DEMO_NORMAL", 1299, 1250, 1, 0, False, False, 12, 2, 1, 48, 13, "upi"),
@@ -37,16 +43,14 @@ def seed_demo_rows(db) -> int:
         scenario("DEMO_LOCATION", 7200, 6800, 2, 1, False, True, 1840, 3, 2, 44, 3, "netbanking", "AE"),
         scenario("DEMO_COMBINED", 42850, 10100, 8, 4, True, True, 2110, 15, 11, 18, 2, "card", "US"),
     ]
-    synthetic = generate_dataset(rows=180, seed=7).drop(columns=["is_fraud"])
-    rows.extend(synthetic.to_dict("records"))
+    rows.extend(generate_dataset(rows=180, seed=7).drop(columns=["is_fraud"]).to_dict("records"))
+    existing_ids = set(db.scalars(select(Transaction.transaction_id).where(Transaction.transaction_id.in_([row["transaction_id"] for row in rows]))).all())
     seeded = 0
     for row in rows:
-        try:
-            predict_and_save(db, row)
-            seeded += 1
-        except Exception as exc:  # noqa: BLE001 - ignore repeat demo IDs but keep seeding.
-            db.rollback()
-            print(f"Skipped {row.get('transaction_id')}: {exc}")
+        if row["transaction_id"] in existing_ids:
+            continue
+        predict_and_save(db, row)
+        seeded += 1
     return seeded
 
 
@@ -57,7 +61,7 @@ def main() -> None:
         count = seed_demo_rows(db)
     finally:
         db.close()
-    print(f"Seeded {count} demo transactions.")
+    print(f"Seeded {count} new demo transactions.")
 
 
 if __name__ == "__main__":
