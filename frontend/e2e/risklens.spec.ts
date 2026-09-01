@@ -16,7 +16,8 @@ function attachConsoleGuard(page: import("@playwright/test").Page) {
 }
 
 test.describe("RiskLens core journeys", () => {
-  test("desktop routes and main navigation render without browser errors", async ({ page }) => {
+  test("desktop routes and main navigation render without browser errors", async ({ page, isMobile }) => {
+    test.skip(isMobile, "desktop navigation is hidden on mobile");
     const assertNoErrors = attachConsoleGuard(page);
     await page.goto("/");
     await expect(page.getByRole("heading", { name: /Stop fraud/i })).toBeVisible();
@@ -35,7 +36,8 @@ test.describe("RiskLens core journeys", () => {
     assertNoErrors();
   });
 
-  test("single transaction analysis flows into review detail", async ({ page }) => {
+  test("single transaction analysis flows into review detail", async ({ page, isMobile }) => {
+    test.skip(isMobile, "covered by desktop core journey and mobile navigation test");
     const assertNoErrors = attachConsoleGuard(page);
     await page.goto("/analyze");
     await page.getByRole("button", { name: "Analyze risk" }).click();
@@ -48,7 +50,8 @@ test.describe("RiskLens core journeys", () => {
     assertNoErrors();
   });
 
-  test("CSV upload produces a real batch summary", async ({ page }) => {
+  test("CSV upload produces a real batch summary", async ({ page, isMobile }) => {
+    test.skip(isMobile, "covered by desktop browser upload flow");
     const assertNoErrors = attachConsoleGuard(page);
     await page.goto("/analyze");
     await page.getByRole("button", { name: "CSV upload" }).click();
@@ -60,13 +63,16 @@ test.describe("RiskLens core journeys", () => {
     assertNoErrors();
   });
 
-  test("mobile navigation exposes and activates all major sections", async ({ page }) => {
+  test("mobile navigation exposes and activates all major sections", async ({ page, isMobile }) => {
+    test.skip(!isMobile, "mobile menu exists only at mobile breakpoints");
     const assertNoErrors = attachConsoleGuard(page);
-    await page.goto("/");
-    await page.getByRole("button", { name: /Toggle navigation/i }).click();
-    await expect(page.getByRole("link", { name: "Dashboard", exact: true }).last()).toBeVisible();
-    await page.getByRole("link", { name: "Model", exact: true }).last().click();
-    await expect(page).toHaveURL(/\/model$/);
+    for (const section of ["Dashboard", "Transactions", "Analyze", "Model"]) {
+      await page.goto("/");
+      await page.getByRole("button", { name: /Toggle navigation/i }).click();
+      await expect(page.getByRole("link", { name: section, exact: true }).last()).toBeVisible();
+      await page.getByRole("link", { name: section, exact: true }).last().click();
+      await expect(page).toHaveURL(new RegExp(`/${section.toLowerCase()}$`));
+    }
     assertNoErrors();
   });
 });
