@@ -1,0 +1,65 @@
+name: RiskLens E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Generate data and train model
+        run: |
+          python scripts/generate_data.py
+          python scripts/train_model.py
+      - name: Start backend
+        env:
+          PYTHONPATH: .
+        run: nohup uvicorn backend.main:app --host 127.0.0.1 --port 8000 > /tmp/risklens-backend.log 2>&1 &
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api
+        run: nohup npm run start -- -H 127.0.0.1 -p 3000 > /tmp/risklens-frontend.log 2>&1 &
+      - name: Wait for services
+        run: |
+          for i in {1..30}; do curl --fail http://127.0.0.1:8000/api/health && break || sleep 2; done
+          for i in {1..30}; do curl --fail http://127.0.0.1:3000 && break || sleep 2; done
+      - name: Seed demo data
+        run: curl --fail -X POST http://127.0.0.1:8000/api/demo/seed
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run browser tests
+        working-directory: frontend
+        run: npm run e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: risklens-playwright-report
+          path: frontend/playwright-report/
+          if-no-files-found: ignore
+      - name: Dump backend log on failure
+        if: failure()
+        run: cat /tmp/risklens-backend.log
+      - name: Dump frontend log on failure
+        if: failure()
+        run: cat /tmp/risklens-frontend.log
