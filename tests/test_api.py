@@ -8,27 +8,7 @@ client = TestClient(app)
 
 
 def payload():
-    return {
-        "amount": 42850,
-        "currency": "INR",
-        "customer_id": "TEST_CUST_API",
-        "account_age_days": 24,
-        "device_id": "TEST_DEV_API",
-        "country": "IN",
-        "transactions_last_10m": 8,
-        "transactions_last_1h": 16,
-        "failed_payments": 4,
-        "previous_transaction_amount": 10100,
-        "previous_avg_amount": 10100,
-        "is_new_device": True,
-        "is_new_location": True,
-        "distance_from_previous_location": 2100,
-        "device_transaction_count": 15,
-        "ip_transaction_count": 11,
-        "customer_transaction_count": 18,
-        "payment_method": "card",
-        "hour": 2,
-    }
+    return {"amount": 42850, "currency": "INR", "customer_id": "TEST_CUST_API", "account_age_days": 24, "device_id": "TEST_DEV_API", "country": "IN", "transactions_last_10m": 8, "transactions_last_1h": 16, "failed_payments": 4, "previous_transaction_amount": 10100, "previous_avg_amount": 10100, "is_new_device": True, "is_new_location": True, "distance_from_previous_location": 2100, "device_transaction_count": 15, "ip_transaction_count": 11, "customer_transaction_count": 18, "payment_method": "card", "hour": 2}
 
 
 def test_health():
@@ -41,7 +21,9 @@ def test_predict():
     response = client.post("/api/predict", json=payload())
     assert response.status_code == 200
     body = response.json()
-    assert set(["risk_score", "risk_level", "fraud_probability", "reasons", "recommended_action"]).issubset(body)
+    assert {"risk_score", "risk_level", "fraud_probability", "reasons", "recommended_action"}.issubset(body)
+    assert 0 <= body["risk_score"] <= 100
+    assert 0 <= body["fraud_probability"] <= 1
 
 
 def test_batch_predict():
@@ -56,7 +38,7 @@ def test_batch_predict():
 def test_metrics_and_dashboard():
     metrics = client.get("/api/metrics")
     assert metrics.status_code == 200
-    assert metrics.json().get("test_size", 0) > 0
+    assert metrics.json().get("test_size", 0) >= 1000
     dashboard = client.get("/api/dashboard")
     assert dashboard.status_code == 200
     assert dashboard.json()["transactions_analyzed"] >= 1
@@ -67,3 +49,20 @@ def test_invalid_transaction():
     bad["amount"] = 0
     response = client.post("/api/predict", json=bad)
     assert response.status_code == 422
+
+
+def test_invalid_csv_and_size_limit():
+    bad_type = client.post("/api/batch-predict", files={"file": ("demo.txt", io.BytesIO(b"x"), "text/plain")})
+    assert bad_type.status_code == 400
+    empty = client.post("/api/batch-predict", files={"file": ("empty.csv", io.BytesIO(b""), "text/csv")})
+    assert empty.status_code == 400
+    large = client.post("/api/batch-predict", files={"file": ("large.csv", io.BytesIO(b"x" * (5 * 1024 * 1024 + 1)), "text/csv")})
+    assert large.status_code == 413
+
+
+def test_transaction_not_found_and_export():
+    missing = client.get("/api/transactions/DOES_NOT_EXIST")
+    assert missing.status_code == 404
+    export = client.get("/api/transactions/export")
+    assert export.status_code == 200
+    assert "text/csv" in export.headers["content-type"]
