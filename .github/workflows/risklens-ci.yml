@@ -16,6 +16,8 @@ jobs:
           python-version: "3.12"
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
+      - name: Generate deterministic synthetic dataset
+        run: python scripts/generate_data.py
       - name: Train demo model
         run: python scripts/train_model.py
       - name: Run backend tests
