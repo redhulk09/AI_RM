@@ -44,9 +44,9 @@ jobs:
           for i in {1..30}; do curl --fail http://127.0.0.1:3000 && break || sleep 2; done
       - name: Seed demo data
         run: curl --fail -X POST http://127.0.0.1:8000/api/demo/seed
-      - name: Install Playwright browser
+      - name: Install Playwright browsers
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Run browser tests
         working-directory: frontend
         run: npm run e2e
