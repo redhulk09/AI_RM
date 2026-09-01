@@ -107,11 +107,17 @@ def _csv_row_to_transaction(row: dict[str, str], index: int) -> dict[str, Any]:
             raise ValueError(f"{name} must be non-negative")
         return value
 
+    def binary(name: str, default: int = 0) -> bool:
+        value = int(float(row.get(name, default)))
+        if value not in (0, 1):
+            raise ValueError(f"{name} must be 0 or 1")
+        return bool(value)
+
     amount = number("amount")
     if amount <= 0:
         raise ValueError("amount must be positive")
     previous_avg = number("previous_avg_amount")
-    return {"transaction_id": row.get("transaction_id") or f"TXN_CSV_{index:06d}", "amount": amount, "currency": row.get("currency", "INR"), "customer_id": row["customer_id"], "account_age_days": integer("account_age_days"), "device_id": row.get("device_id", "demo-device"), "country": row.get("country", "IN"), "transactions_last_10m": integer("transactions_last_10m"), "transactions_last_1h": integer("transactions_last_1h"), "failed_payments": integer("failed_payments"), "previous_transaction_amount": number("previous_transaction_amount"), "previous_avg_amount": previous_avg, "previous_transaction_frequency": number("previous_transaction_frequency"), "is_new_device": bool(int(float(row.get("is_new_device", 0)))), "is_new_location": bool(int(float(row.get("is_new_location", 0)))), "distance_from_previous_location": number("distance_from_previous_location"), "device_transaction_count": integer("device_transaction_count", 1), "ip_transaction_count": integer("ip_transaction_count", 1), "customer_transaction_count": integer("customer_transaction_count", 1), "payment_method": row.get("payment_method", "upi"), "hour": integer("hour", 12), "threshold": 0.70, "amount_deviation": number("amount_deviation", amount / max(previous_avg, 1))}
+    return {"transaction_id": row.get("transaction_id") or f"TXN_CSV_{index:06d}", "amount": amount, "currency": row.get("currency", "INR"), "customer_id": row["customer_id"], "account_age_days": integer("account_age_days"), "device_id": row.get("device_id", "demo-device"), "country": row.get("country", "IN"), "transactions_last_10m": integer("transactions_last_10m"), "transactions_last_1h": integer("transactions_last_1h"), "failed_payments": integer("failed_payments"), "previous_transaction_amount": number("previous_transaction_amount"), "previous_avg_amount": previous_avg, "previous_transaction_frequency": number("previous_transaction_frequency"), "is_new_device": binary("is_new_device"), "is_new_location": binary("is_new_location"), "distance_from_previous_location": number("distance_from_previous_location"), "device_transaction_count": integer("device_transaction_count", 1), "ip_transaction_count": integer("ip_transaction_count", 1), "customer_transaction_count": integer("customer_transaction_count", 1), "payment_method": row.get("payment_method", "upi"), "hour": integer("hour", 12), "threshold": 0.70, "amount_deviation": number("amount_deviation", amount / max(previous_avg, 1))}
 
 
 def _prediction_response(item: dict[str, Any]) -> dict[str, Any]:
