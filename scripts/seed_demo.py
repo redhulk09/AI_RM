@@ -43,7 +43,16 @@ def seed_demo_rows(db: Session) -> int:
         scenario("DEMO_LOCATION", 7200, 6800, 2, 1, False, True, 1840, 3, 2, 44, 3, "netbanking", "AE"),
         scenario("DEMO_COMBINED", 42850, 10100, 8, 4, True, True, 2110, 15, 11, 18, 2, "card", "US"),
     ]
-    rows.extend(generate_dataset(rows=180, seed=7).drop(columns=["is_fraud"]).to_dict("records"))
+    generated = generate_dataset(rows=180, seed=7).drop(columns=["is_fraud"]).to_dict("records")
+    now = datetime.now(timezone.utc).isoformat()
+    for row in generated:
+        row.setdefault("currency", "INR")
+        row.setdefault("device_id", f"DEV_{row['transaction_id']}")
+        row.setdefault("timestamp", now)
+        row.setdefault("previous_transaction_amount", row["previous_avg_amount"])
+        row.setdefault("previous_transaction_frequency", 2.0)
+        row.setdefault("threshold", 0.70)
+    rows.extend(generated)
     existing_ids = set(db.scalars(select(Transaction.transaction_id).where(Transaction.transaction_id.in_([row["transaction_id"] for row in rows]))).all())
     seeded = 0
     for row in rows:
