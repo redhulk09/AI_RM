@@ -1,4 +1,4 @@
-"""Seed RiskLens with memorable demo scenarios and additional synthetic traffic."""
+"""Seed RiskLens with memorable defense-only demo scenarios."""
 
 from pathlib import Path
 import sys
@@ -26,8 +26,7 @@ def scenario(transaction_id: str, amount: float, previous_avg: float, velocity: 
     }
 
 
-def main() -> None:
-    init_db()
+def seed_demo_rows(db) -> int:
     load_artifact()
     rows = [
         scenario("DEMO_NORMAL", 1299, 1250, 1, 0, False, False, 12, 2, 1, 48, 13, "upi"),
@@ -40,17 +39,25 @@ def main() -> None:
     ]
     synthetic = generate_dataset(rows=180, seed=7).drop(columns=["is_fraud"])
     rows.extend(synthetic.to_dict("records"))
+    seeded = 0
+    for row in rows:
+        try:
+            predict_and_save(db, row)
+            seeded += 1
+        except Exception as exc:  # noqa: BLE001 - ignore repeat demo IDs but keep seeding.
+            db.rollback()
+            print(f"Skipped {row.get('transaction_id')}: {exc}")
+    return seeded
+
+
+def main() -> None:
+    init_db()
     db = SessionLocal()
     try:
-        for row in rows:
-            try:
-                predict_and_save(db, row)
-            except Exception as exc:  # noqa: BLE001 - demo seeding should continue past duplicate rows.
-                db.rollback()
-                print(f"Skipped {row.get('transaction_id')}: {exc}")
+        count = seed_demo_rows(db)
     finally:
         db.close()
-    print(f"Seeded {len(rows)} demo transactions.")
+    print(f"Seeded {count} demo transactions.")
 
 
 if __name__ == "__main__":
