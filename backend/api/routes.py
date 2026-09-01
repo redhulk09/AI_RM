@@ -19,6 +19,8 @@ from ..services.metrics_service import dashboard_stats, metrics_response, save_e
 from ..services.transaction_service import predict_and_save, recent_transactions, save_prediction, transaction_detail
 
 router = APIRouter(prefix="/api")
+MAX_CSV_BYTES = 5 * 1024 * 1024
+MAX_CSV_ROWS = 10_000
 
 
 @router.get("/health")
@@ -42,6 +44,8 @@ def batch_predict(file: UploadFile = File(...), threshold: float = Query(0.70, g
     raw = file.file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="The uploaded CSV is empty.")
+    if len(raw) > MAX_CSV_BYTES:
+        raise HTTPException(status_code=413, detail="CSV file is too large. Maximum size is 5 MB.")
     try:
         text = raw.decode("utf-8-sig")
         reader = csv.DictReader(io.StringIO(text))
@@ -50,6 +54,8 @@ def batch_predict(file: UploadFile = File(...), threshold: float = Query(0.70, g
         rows = list(reader)
         if not rows:
             raise HTTPException(status_code=400, detail="The uploaded CSV contains no transactions.")
+        if len(rows) > MAX_CSV_ROWS:
+            raise HTTPException(status_code=413, detail="CSV contains too many rows. Maximum is 10,000.")
         valid: list[dict[str, Any]] = []
         invalid = 0
         for index, row in enumerate(rows, start=2):
@@ -67,9 +73,7 @@ def batch_predict(file: UploadFile = File(...), threshold: float = Query(0.70, g
         medium = sum(item["risk_level"] == "MEDIUM" for item in predictions)
         low = len(predictions) - high - medium
         exposure = sum(item["amount"] for item in predictions if item["risk_level"] == "HIGH")
-        return {"filename": file.filename, "rows_detected": len(rows), "valid_transactions": len(valid), "invalid_rows": invalid,
-                "summary": {"total_analyzed": len(predictions), "high_risk": high, "medium_risk": medium, "low_risk": low, "estimated_exposure": exposure},
-                "results": [_prediction_response(item) for item in predictions]}
+        return {"filename": file.filename, "rows_detected": len(rows), "valid_transactions": len(valid), "invalid_rows": invalid, "summary": {"total_analyzed": len(predictions), "high_risk": high, "medium_risk": medium, "low_risk": low, "estimated_exposure": exposure}, "results": [_prediction_response(item) for item in predictions]}
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.") from exc
     except SQLAlchemyError as exc:
@@ -86,7 +90,7 @@ def _csv_row_to_transaction(row: dict[str, str], index: int) -> dict[str, Any]:
 
     def number(name: str, default: float = 0) -> float:
         value = float(row.get(name, default))
-        if value < 0:
+        if value < 0 and name != "distance_from_previous_location":
             raise ValueError(f"{name} must be non-negative")
         return value
 
@@ -94,18 +98,7 @@ def _csv_row_to_transaction(row: dict[str, str], index: int) -> dict[str, Any]:
     if amount <= 0:
         raise ValueError("amount must be positive")
     previous_avg = number("previous_avg_amount")
-    return {
-        "transaction_id": row.get("transaction_id") or f"TXN_CSV_{index:06d}", "amount": amount, "currency": row.get("currency", "INR"),
-        "customer_id": row["customer_id"], "account_age_days": integer("account_age_days"), "device_id": row.get("device_id", "demo-device"),
-        "country": row.get("country", "IN"), "transactions_last_10m": integer("transactions_last_10m"), "transactions_last_1h": integer("transactions_last_1h"),
-        "failed_payments": integer("failed_payments"), "previous_transaction_amount": number("previous_transaction_amount"),
-        "previous_avg_amount": previous_avg, "previous_transaction_frequency": number("previous_transaction_frequency"),
-        "is_new_device": bool(int(float(row.get("is_new_device", 0)))), "is_new_location": bool(int(float(row.get("is_new_location", 0)))),
-        "distance_from_previous_location": number("distance_from_previous_location"), "device_transaction_count": integer("device_transaction_count", 1),
-        "ip_transaction_count": integer("ip_transaction_count", 1), "customer_transaction_count": integer("customer_transaction_count", 1),
-        "payment_method": row.get("payment_method", "upi"), "hour": integer("hour", 12), "threshold": 0.70,
-        "amount_deviation": number("amount_deviation", amount / max(previous_avg, 1)),
-    }
+    return {"transaction_id": row.get("transaction_id") or f"TXN_CSV_{index:06d}", "amount": amount, "currency": row.get("currency", "INR"), "customer_id": row["customer_id"], "account_age_days": integer("account_age_days"), "device_id": row.get("device_id", "demo-device"), "country": row.get("country", "IN"), "transactions_last_10m": integer("transactions_last_10m"), "transactions_last_1h": integer("transactions_last_1h"), "failed_payments": integer("failed_payments"), "previous_transaction_amount": number("previous_transaction_amount"), "previous_avg_amount": previous_avg, "previous_transaction_frequency": number("previous_transaction_frequency"), "is_new_device": bool(int(float(row.get("is_new_device", 0)))), "is_new_location": bool(int(float(row.get("is_new_location", 0)))), "distance_from_previous_location": number("distance_from_previous_location"), "device_transaction_count": integer("device_transaction_count", 1), "ip_transaction_count": integer("ip_transaction_count", 1), "customer_transaction_count": integer("customer_transaction_count", 1), "payment_method": row.get("payment_method", "upi"), "hour": integer("hour", 12), "threshold": 0.70, "amount_deviation": number("amount_deviation", amount / max(previous_avg, 1))}
 
 
 def _prediction_response(item: dict[str, Any]) -> dict[str, Any]:
