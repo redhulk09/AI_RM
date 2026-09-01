@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -18,6 +19,7 @@ from ..schemas import BatchResult, PredictionOut, TransactionInput
 from ..services.metrics_service import dashboard_stats, metrics_response, save_evaluation_metric
 from ..services.transaction_service import predict_and_save, recent_transactions, save_prediction, transaction_detail
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_CSV_ROWS = 10_000
@@ -32,9 +34,16 @@ def health() -> dict[str, str]:
 def predict(payload: TransactionInput, db: Session = Depends(get_db)):
     try:
         return predict_and_save(db, payload.model_dump())
-    except (ValueError, SQLAlchemyError, FileNotFoundError) as exc:
+    except FileNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Risk model is unavailable. Run training before analyzing transactions.") from exc
+    except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Prediction persistence failed")
+        raise HTTPException(status_code=500, detail="Transaction analysis could not be saved.") from exc
 
 
 @router.post("/batch-predict", response_model=BatchResult)
@@ -76,8 +85,12 @@ def batch_predict(file: UploadFile = File(...), threshold: float = Query(0.70, g
         return {"filename": file.filename, "rows_detected": len(rows), "valid_transactions": len(valid), "invalid_rows": invalid, "summary": {"total_analyzed": len(predictions), "high_risk": high, "medium_risk": medium, "low_risk": low, "estimated_exposure": exposure}, "results": [_prediction_response(item) for item in predictions]}
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.") from exc
+    except FileNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Risk model is unavailable. Run training before analyzing transactions.") from exc
     except SQLAlchemyError as exc:
         db.rollback()
+        logger.exception("Batch persistence failed")
         raise HTTPException(status_code=500, detail="Could not save batch predictions.") from exc
 
 
@@ -152,7 +165,8 @@ def train(db: Session = Depends(get_db)):
         return evaluation
     except Exception as exc:  # noqa: BLE001 - convert training failures at the HTTP boundary.
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Model training failed: {exc}") from exc
+        logger.exception("Model training failed")
+        raise HTTPException(status_code=500, detail="Model training failed. Check server logs for details.") from exc
 
 
 @router.post("/demo/seed")
@@ -163,4 +177,5 @@ def demo_seed(db: Session = Depends(get_db)):
         return {"status": "ok", "seeded": count}
     except Exception as exc:  # noqa: BLE001 - clean demo endpoint failure.
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Demo seed failed: {exc}") from exc
+        logger.exception("Demo data seeding failed")
+        raise HTTPException(status_code=500, detail="Demo data could not be loaded. Check server logs for details.") from exc
