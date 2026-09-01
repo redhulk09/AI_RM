@@ -21,6 +21,8 @@ jobs:
       - name: Train demo model
         run: python scripts/train_model.py
       - name: Run backend tests
+        env:
+          PYTHONPATH: .
         run: pytest -q
 
   frontend:
