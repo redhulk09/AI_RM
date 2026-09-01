@@ -52,6 +52,7 @@ def seed_demo_rows(db: Session) -> int:
     now = datetime.now(timezone.utc).isoformat()
     for row in generated:
         row = _native_scalars(row)
+        row["customer_id"] = f"DEMO_{str(row['transaction_id'])[-6:]}"
         row.setdefault("currency", "INR")
         row.setdefault("device_id", f"DEV_{row['transaction_id']}")
         row.setdefault("timestamp", now)
