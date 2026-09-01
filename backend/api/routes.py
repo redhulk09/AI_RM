@@ -54,8 +54,7 @@ def batch_predict(file: UploadFile = File(...), threshold: float = Query(0.70, g
         invalid = 0
         for index, row in enumerate(rows, start=2):
             try:
-                normalized = _csv_row_to_transaction(row, index)
-                valid.append(normalized)
+                valid.append(_csv_row_to_transaction(row, index))
             except (KeyError, TypeError, ValueError):
                 invalid += 1
         if not valid:
@@ -68,11 +67,9 @@ def batch_predict(file: UploadFile = File(...), threshold: float = Query(0.70, g
         medium = sum(item["risk_level"] == "MEDIUM" for item in predictions)
         low = len(predictions) - high - medium
         exposure = sum(item["amount"] for item in predictions if item["risk_level"] == "HIGH")
-        return {
-            "filename": file.filename, "rows_detected": len(rows), "valid_transactions": len(valid), "invalid_rows": invalid,
-            "summary": {"total_analyzed": len(predictions), "high_risk": high, "medium_risk": medium, "low_risk": low, "estimated_exposure": exposure},
-            "results": [_prediction_response(item) for item in predictions],
-        }
+        return {"filename": file.filename, "rows_detected": len(rows), "valid_transactions": len(valid), "invalid_rows": invalid,
+                "summary": {"total_analyzed": len(predictions), "high_risk": high, "medium_risk": medium, "low_risk": low, "estimated_exposure": exposure},
+                "results": [_prediction_response(item) for item in predictions]}
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.") from exc
     except SQLAlchemyError as exc:
@@ -89,7 +86,7 @@ def _csv_row_to_transaction(row: dict[str, str], index: int) -> dict[str, Any]:
 
     def number(name: str, default: float = 0) -> float:
         value = float(row.get(name, default))
-        if value < 0 and name != "distance_from_previous_location":
+        if value < 0:
             raise ValueError(f"{name} must be non-negative")
         return value
 
