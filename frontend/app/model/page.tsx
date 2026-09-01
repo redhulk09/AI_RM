@@ -17,7 +17,7 @@ export default function ModelPage() {
   const load = async () => {
     try {
       const data = await apiFetch<MetricsResponse>(`/metrics?threshold=${threshold}`);
-      if ("status" in data && data.status === "unavailable") throw new Error(data.message);
+      if (!("model_name" in data)) throw new Error(data.message);
       setMetrics(data);
       setMessage("");
     } catch (e) {
