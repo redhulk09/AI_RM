@@ -32,6 +32,11 @@ def scenario(transaction_id: str, amount: float, previous_avg: float, velocity: 
     }
 
 
+def _native_scalars(row: dict) -> dict:
+    """Convert pandas/NumPy scalar values to SQLite/JSON-safe Python types."""
+    return {key: value.item() if hasattr(value, "item") else value for key, value in row.items()}
+
+
 def seed_demo_rows(db: Session) -> int:
     load_artifact()
     rows = [
@@ -46,13 +51,17 @@ def seed_demo_rows(db: Session) -> int:
     generated = generate_dataset(rows=180, seed=7).drop(columns=["is_fraud"]).to_dict("records")
     now = datetime.now(timezone.utc).isoformat()
     for row in generated:
+        row = _native_scalars(row)
         row.setdefault("currency", "INR")
         row.setdefault("device_id", f"DEV_{row['transaction_id']}")
         row.setdefault("timestamp", now)
         row.setdefault("previous_transaction_amount", row["previous_avg_amount"])
         row.setdefault("previous_transaction_frequency", 2.0)
         row.setdefault("threshold", 0.70)
-    rows.extend(generated)
+        row["amount_deviation"] = float(row.get("amount_deviation", row["amount"] / max(row["previous_avg_amount"], 1)))
+        row["is_new_device"] = bool(row.get("is_new_device", False))
+        row["is_new_location"] = bool(row.get("is_new_location", False))
+        rows.append(row)
     existing_ids = set(db.scalars(select(Transaction.transaction_id).where(Transaction.transaction_id.in_([row["transaction_id"] for row in rows]))).all())
     seeded = 0
     for row in rows:
