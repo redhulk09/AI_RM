@@ -12,3 +12,8 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+backend/ml/model.pkl
+backend/ml/evaluation.json
