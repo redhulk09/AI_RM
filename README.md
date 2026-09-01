@@ -1,121 +1,311 @@
-# AI Risk Manager (AI_RM)
+# RiskLens
 
-A lightweight, runnable Risk Manager MVP built with FastAPI and SQLite. It provides a small REST API and browser UI for creating, scoring, reviewing, and monitoring project/business risks.
+**AI Risk Manager — stop the merchant losing money to fraud, returns and chargebacks.**
 
-> **Note:** The shared ChatGPT conversation linked for this project was not machine-readable from the available access path, so this implementation is a best-effort MVP based on the repository name and the visible conversation title, **"Build Risk Manager MVP Prompt"**. The project is intentionally modular so a more specific workflow or AI provider can be plugged in without rewriting the core risk engine.
+RiskLens is a **defense-only** transaction risk intelligence platform for merchants. It validates a payment, engineers behavioral features, runs a real scikit-learn model, returns a 0–100 risk score with human-readable reasons, stores the decision, and surfaces aggregate risk and model performance in a premium Next.js dashboard.
 
-## Features
+All demo customer IDs, transactions, and fraud labels are synthetic. **All demo data is synthetic and metrics are not representative of production performance.**
 
-- Create, list, retrieve, and delete risks.
-- Deterministic risk scoring from likelihood × impact.
-- Automatic priority bands: Low, Medium, High, Critical.
-- Optional control effectiveness adjustment.
-- AI-assisted recommendations using a deterministic local analyzer (no API key required).
-- SQLite persistence with a small, dependency-light codebase.
-- Browser dashboard served directly by FastAPI.
-- Automated tests for the core risk engine.
+## 1. Problem
 
-## Project structure
+Merchants need to make faster payment decisions while balancing two expensive failure modes: false positives create customer friction and lost conversion; false negatives let fraud pass through and create direct loss.
+
+RiskLens turns transaction signals into a review queue rather than silently rejecting payments.
+
+## 2. Solution
+
+The product flow is:
 
 ```text
-AI_RM/
-├── app/
-│   ├── __init__.py
-│   ├── ai.py
-│   ├── main.py
-│   ├── models.py
-│   ├── risk_engine.py
-│   └── storage.py
-├── static/
-│   ├── app.js
-│   ├── index.html
-│   └── styles.css
-├── tests/
-│   └── test_risk_engine.py
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── LICENSE
-├── README.md
-└── requirements.txt
+Merchant transaction
+        ↓
+Validation
+        ↓
+Feature engineering
+        ↓
+ML model probability
+        ↓
+0–100 risk score
+        ↓
+LOW / MEDIUM / HIGH
+        ↓
+Human-readable reasons
+        ↓
+Merchant review decision
+        ↓
+SQLite + dashboard aggregates
 ```
 
-## Run locally
+## 3. Architecture
 
-### 1. Create an environment
+```text
+Next.js + React + TypeScript + Tailwind
+                ↓
+             FastAPI
+                ↓
+          Risk Engine / API
+                ↓
+        scikit-learn Pipeline
+                ↓
+             SQLite
+```
+
+The database layer uses SQLAlchemy so the persistence boundary can later move to PostgreSQL with minimal application changes.
+
+## 4. Project structure
+
+```text
+risklens/
+├── backend/
+│   ├── api/routes.py
+│   ├── database.py
+│   ├── models.py
+│   ├── schemas.py
+│   ├── main.py
+│   ├── ml/
+│   │   ├── dataset.py
+│   │   ├── features.py
+│   │   ├── train.py
+│   │   ├── predict.py
+│   │   ├── evaluate.py
+│   │   └── explain.py
+│   ├── services/
+│   │   ├── metrics_service.py
+│   │   └── transaction_service.py
+│   └── requirements.txt
+├── frontend/
+│   ├── app/
+│   │   ├── page.tsx
+│   │   ├── dashboard/page.tsx
+│   │   ├── analyze/page.tsx
+│   │   ├── transactions/page.tsx
+│   │   ├── transactions/[id]/page.tsx
+│   │   └── model/page.tsx
+│   ├── components/
+│   └── lib/api.ts
+├── data/transactions.csv
+├── scripts/
+│   ├── generate_data.py
+│   ├── train_model.py
+│   └── seed_demo.py
+├── tests/
+│   ├── test_api.py
+│   └── test_model.py
+├── docker-compose.yml
+└── README.md
+```
+
+## 5. ML methodology
+
+RiskLens generates a synthetic transaction population with meaningful behavioral relationships instead of assigning fraud completely at random. Fraud likelihood increases with combinations such as high velocity, abnormal amount deviation, new device, new location, multiple recent failures, and suspicious shared-device/IP activity.
+
+The training pipeline uses three stratified partitions:
+
+- **60% train** — model fitting.
+- **20% validation** — baseline/final model selection by ROC-AUC.
+- **20% test** — completely held out until final reporting.
+
+The test set is not used for tuning or selecting the final model.
+
+### Baseline
+
+Logistic Regression with a shared preprocessing pipeline.
+
+### Final candidate
+
+Random Forest with balanced classes and conservative depth/leaf constraints for fast hackathon inference.
+
+The pipeline selects the better candidate by validation ROC-AUC, refits that selected model on train + validation, then evaluates once on test.
+
+## 6. Dataset
+
+`data/transactions.csv` is a small committed synthetic sample for inspection. `scripts/generate_data.py` can generate the larger demo dataset automatically.
+
+Features include:
+
+`transaction_id`, `amount`, `account_age_days`, `transactions_last_10m`, `transactions_last_1h`, `failed_payments`, `previous_avg_amount`, `amount_deviation`, `is_new_device`, `is_new_location`, `distance_from_previous_location`, `device_transaction_count`, `ip_transaction_count`, `payment_method`, `hour`, `country`, `customer_transaction_count`, `is_fraud`.
+
+## 7. Feature engineering
+
+Numeric inputs are passed through a shared preprocessing definition. Categorical country/payment-method values use one-hot encoding with unknown-category handling.
+
+For live prediction, `amount_deviation` is derived from amount / previous average amount when it is not explicitly supplied.
+
+## 8. Risk score and explainability
+
+The model probability is converted to a product score:
+
+```text
+risk_score = round(fraud_probability × 100)
+
+0–39  LOW
+40–69 MEDIUM
+70–100 HIGH
+```
+
+The response includes `fraud_probability`, `risk_score`, `risk_level`, `reasons`, `top_features`, and a recommended review action.
+
+Explanations translate feature importance into merchant language, for example:
+
+- `amount_deviation` → Transaction amount is significantly above the customer's normal behavior.
+- `transactions_last_10m` → Unusually high transaction velocity detected in the last 10 minutes.
+- `is_new_device` → Transaction originated from a new device.
+- `failed_payments` → Multiple recent payment failures detected.
+
+These are decision-support explanations, not proof of fraud.
+
+## 9. Evaluation methodology
+
+The model page exposes the actual calculated held-out metrics:
+
+- test set size
+- fraud prevalence
+- precision
+- recall
+- F1
+- ROC-AUC
+- false-positive rate
+- confusion matrix
+- model feature importance
+- threshold curve
+
+It also compares the validation ROC-AUC of the Logistic Regression baseline and Random Forest candidate.
+
+### Threshold tradeoff
+
+The product includes a configurable review threshold. Lower thresholds generally increase recall while also increasing the number of legitimate payments sent for review. The UI shows precision, recall, and F1 across threshold values rather than pretending one cutoff is universally correct.
+
+## 10. Business cost assumptions
+
+The demo uses explicit configurable assumptions:
+
+- **False-positive cost:** ₹100 per legitimate transaction flagged.
+- **False-negative cost:** mean fraudulent transaction amount.
+- **Estimated prevented loss:** fraudulent transaction amount × recall on the held-out test set, used only as a demo proxy.
+
+The dashboard therefore labels the figure as an estimate rather than realized savings.
+
+## 11. API documentation
+
+FastAPI automatically exposes OpenAPI/Swagger at `/docs`.
+
+Core endpoints:
+
+```text
+GET  /api/health
+POST /api/predict
+POST /api/batch-predict
+GET  /api/metrics
+GET  /api/dashboard
+GET  /api/transactions
+GET  /api/transactions/{id}
+GET  /api/transactions/export
+POST /api/train
+POST /api/demo/seed
+```
+
+Single prediction example:
+
+```json
+{
+  "amount": 42850,
+  "currency": "INR",
+  "customer_id": "DEMO_CUSTOMER",
+  "account_age_days": 24,
+  "device_id": "DEMO_DEVICE",
+  "country": "IN",
+  "transactions_last_10m": 8,
+  "transactions_last_1h": 16,
+  "failed_payments": 4,
+  "previous_avg_amount": 10100,
+  "is_new_device": true,
+  "is_new_location": true,
+  "distance_from_previous_location": 2100,
+  "device_transaction_count": 15,
+  "ip_transaction_count": 11,
+  "customer_transaction_count": 18,
+  "payment_method": "card",
+  "hour": 2
+}
+```
+
+Expected response shape:
+
+```json
+{
+  "transaction_id": "TXN_...",
+  "risk_score": 87,
+  "risk_level": "HIGH",
+  "fraud_probability": 0.87,
+  "reasons": ["..."],
+  "top_features": [{"feature": "...", "importance": 0.12, "signal": 3.2, "direction": "increases risk"}],
+  "recommended_action": "Review transaction",
+  "transaction": {"amount": 42850}
+}
+```
+
+## 12. Demo instructions
+
+### Backend
 
 ```bash
+cd backend
 python -m venv .venv
 # Windows
 .venv\Scripts\activate
 # macOS/Linux
 source .venv/bin/activate
-```
-
-### 2. Install dependencies
-
-```bash
 pip install -r requirements.txt
+cd ..
+python scripts/generate_data.py
+python scripts/train_model.py
+python scripts/seed_demo.py
+uvicorn backend.main:app --reload
 ```
 
-### 3. Start the API
+Open `http://localhost:8000/docs` for the API.
+
+### Frontend
 
 ```bash
-uvicorn app.main:app --reload
+cd frontend
+npm install
+npm run dev
 ```
 
-Open http://127.0.0.1:8000 for the dashboard or http://127.0.0.1:8000/docs for Swagger UI.
+Open `http://localhost:3000`.
 
-The database defaults to `risk_manager.db`. Override it with `RISK_MANAGER_DB`.
+### One-click demo
 
-## API examples
+Use **Load demo** on `/dashboard` to seed the memorable demo scenarios: normal transaction, high amount, velocity spike, new device, multiple failures, unusual location, and combined suspicious behavior.
 
-Create a risk:
+### Docker
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/risks \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Third-party API outage",
-    "description": "A critical vendor API could become unavailable.",
-    "category": "Technology",
-    "owner": "Platform Team",
-    "likelihood": 4,
-    "impact": 5,
-    "control_effectiveness": 40
-  }'
+docker compose up --build
 ```
 
-Analyze a risk:
+Frontend: `http://localhost:3000`  
+Backend: `http://localhost:8000`
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/risks/1/analyze
-```
+## 13. Limitations
 
-## Risk scoring
+This is a hackathon MVP using synthetic data, not a production fraud model. Real merchants need temporal validation, leakage controls, richer customer/device/IP histories, calibration, drift monitoring, investigation feedback loops, model governance, privacy/compliance controls, and production-grade authentication and authorization.
 
-The default score is:
+No payment credentials are accepted or stored. RiskLens does not store card numbers, CVVs, OTPs, secrets, or real customer identities.
 
-```text
-base score = likelihood × impact
-adjusted score = round(base score × (1 - control_effectiveness / 100))
-```
+## 14. Future improvements
 
-Severity is derived from the adjusted score:
+Move persistence to PostgreSQL; add proper temporal cross-validation; calibrate probabilities; add merchant-specific cost curves; monitor data/model drift; use SHAP or a similarly governed explanation layer; add authenticated analyst workflows; add audit trails; and support model versions with reproducible artifacts.
 
-- 1–4: Low
-- 5–9: Medium
-- 10–16: High
-- 17–25: Critical
+## 15. Defense-only safety boundary
 
-Likelihood and impact are integers from 1 to 5. Control effectiveness is a percentage from 0 to 100.
+RiskLens is designed only to detect and review potentially fraudulent payments. It does **not** generate fraud, provide evasion tactics, bypass payment controls, steal credentials, manipulate identity, or optimize attacks.
 
-## Testing
+## License
 
-```bash
-pytest -q
-```
+MIT. See [`LICENSE`](LICENSE).
 
-## Extending the MVP
+## Current dependency notes
 
-The `app/ai.py` module exposes a small analyzer boundary. A hosted LLM provider, local model, retrieval system, or organization-specific policy engine can replace the deterministic analyzer while the API and storage layers remain stable.
+The current checked package lines used by this repository were verified against public package indexes when this implementation was updated: Next.js 16.3.4, React 19.2.8, Recharts 3.10.1, Tailwind CSS 4.3.3, FastAPI 0.141.x, SQLAlchemy 2.0.52, and scikit-learn 1.9.0. citeturn494363search3turn990444search0turn766744search0turn766744search3turn494363search2turn990444search3turn990444search5
